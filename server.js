@@ -5,7 +5,7 @@ const app = express();
 const path = require('path');
 const server = require('http').createServer(app);
 const io = require('socket.io')(server);
-const port = process.env.PORT || 3004;
+const port = process.env.PORT || 3000;
 const net = require('net');
 
 const Users = require('./user.js');
@@ -65,6 +65,28 @@ function loadUsersData() {
     }
 }
 
+function updateUserPasswordInFile(username, newPassword) {
+    try {
+        const data = fs.readFileSync('./persist/users.json', 'utf8');
+        const userData = JSON.parse(data);
+
+        // Find the user in the array and update the password
+        for (const userObj of userData) {
+            if (userObj.username === username) {
+                userObj.password = newPassword;
+                break;
+            }
+        }
+
+        // Write the updated data back to the file
+        fs.writeFileSync('./persist/users.json', JSON.stringify(userData, null, 2), 'utf8');
+
+        console.log(`Password for user ${username} updated in users.json file.`);
+    } catch (err) {
+        console.error('Error updating user password in users.json file:', err);
+    }
+}
+
 /**
  * Sets the active state of a user and broadcasts the user state change to all connected sockets.
  *
@@ -109,6 +131,32 @@ io.on('connection', (socket) => {
             socket.emit('wrong-user-data');
     });
 
+    socket.on('change-user-pwd', (data) => {
+        const username = data.username;
+        const oldPassword = data.oldPassword;
+        const newPassword = data.newPassword;
+        let userPassword = "";
+
+        const users = Users.getUsers();
+        for (const user of users) {
+            if (user.username === username) {
+                userPassword = user.password;
+            }
+        }
+        if (userPassword === oldPassword) {
+            userPassword = newPassword;
+            console.log(`Password for user ${username} changed successfully.`);
+
+            // Update the password in the users.json file
+            updateUserPasswordInFile(username, newPassword);
+
+            socket.emit('password-changed', { success: true });
+        } else {
+            console.log(`Failed to change password for user ${username}.`);
+            socket.emit('password-changed', { success: false });
+        }
+    });
+
     socket.on('ask-for-video', (data) => {
         console.log("Btn ask for vid");
         sendBinaryData(["0", "1", "1"]);
@@ -141,8 +189,8 @@ io.on('connection', (socket) => {
 // Node.js Client //////////////
 ////////////////////////////////
 
-const C_SERVER_PORT = 3004;
-const C_SERVER_HOST = '192.168.68.218';
+const C_SERVER_PORT = 3000;
+const C_SERVER_HOST = '192.168.6.110';
 
 function sendToCServer(message) {
     cSocket.write(message);
@@ -164,14 +212,58 @@ function sendBinaryData(data) {
     });
 }
 
+function handleCServerData(data) {
+    const messageType = data.readUInt8(0);
+    console.log('messageType :>> ', messageType);
+    console.log('data.readUInt8(1) :>> ', data.readUInt8(1));
+    console.log('data.readUInt8(2) :>> ', data.readUInt8(2));
+    console.log('data.readUInt8(3) :>> ', data.readUInt8(3));
+    console.log('data.readUInt8(4) :>> ', data.readUInt8(4));
+    console.log('data.readUInt8(5) :>> ', data.readUInt8(5));
+    console.log('data.readUInt8(6) :>> ', data.readUInt8(6));
+    console.log('data.readUInt8(7) :>> ', data.readUInt8(7));
+    console.log('data.readUInt8(8) :>> ', data.readUInt8(8));
+    console.log('data.readUInt8(9) :>> ', data.readUInt8(9));
+    console.log('data.readUInt8(10) :>> ', data.readUInt8(10));
+
+    switch (messageType) {
+        case 1:
+            console.log('Received demande d\'image from C server');
+            break;
+        case 2:
+            console.log('Received demande de désactivation from C server');
+            break;
+        case 3:
+            console.log('Received etat de l\'appareil from C server');
+            const ipAddress = data.slice(1, 5).join('.');
+            const objectByte = data.readUInt8(5);
+            const messageSize = data.readUInt8(6);
+            
+            if (data.length >= 7 + messageSize) {
+                const messageData = data.slice(7, 7 + messageSize);
+                console.log('IP Address:', ipAddress);
+                console.log('Object Byte:', objectByte);
+                console.log('Message Size:', messageSize);
+                console.log('Message Data:', messageData.toString());
+            } else
+                console.log('Incomplete message received for etat de l\'appareil');
+            break;
+        default:
+            console.log('Unknown message type received from C server');
+    }
+}
+
 const cSocket = net.connect(C_SERVER_PORT, C_SERVER_HOST, () => {
     console.log('Connected to C server');
     sendToCServer('Hello from Node.js');
     // cSocket.end(); // Close the connection after sending the message
 });
 
+
+
 cSocket.on('data', (data) => {
     console.log('Received data from C server:', data.toString());
+    handleCServerData(data);
 });
 
 cSocket.on('end', () => {
